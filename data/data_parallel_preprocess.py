@@ -45,5 +45,16 @@ def split_data(
 
     # Try to get the correct start_idx and end_idx from dp_size, mp_size and rank and return
     # the corresponding data
-
-    raise NotImplementedError
+    
+    dp_rank = rank // mp_size
+    split_size = len(x_train) // dp_size
+    
+    # Calculate start and end indices for this data parallel group
+    start_idx = dp_rank * split_size
+    end_idx = (dp_rank + 1) * split_size
+    
+    # Return the corresponding data slice
+    split_x_train = x_train[start_idx:end_idx]
+    split_y_train = y_train[start_idx:end_idx]
+    
+    return split_x_train, split_y_train

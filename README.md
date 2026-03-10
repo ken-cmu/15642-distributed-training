@@ -124,7 +124,7 @@ For instance, for `mp_size=2, dp_size=4` on 8 nodes we will group the nodes as s
 
 ### Part 1. Data Split for Data Parallel Training (10 pts)
 
-For this part, your task is to implement the `split_train` function in `data/data_parallel_preprocess.py`.
+For this part, your task is to implement the `split_data` function in `data/data_parallel_preprocess.py`.
 
 The function takes in the training data and returns the data split according to the given `mp_size, dp_size` 
 and `rank`. You should split data uniformly across data parallel groups while the model parallel groups can share the 
