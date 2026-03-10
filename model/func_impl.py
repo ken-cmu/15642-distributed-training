@@ -278,7 +278,7 @@ def naive_collect_backward_output(
 
     # Hint: you might want to use np.split to get the collected_output_grad for each MP node
 
-    raise NotImplementedError
+    return np.split(output_grad, mp_size, axis=1)[mp_group_idx]
 
 
 def naive_collect_backward_x(
@@ -313,8 +313,19 @@ def naive_collect_backward_x(
 
     # Hint 2: You might want to use reduce_scatter
 
-    raise NotImplementedError
-
+    batch_size, in_dim = grad_x.shape
+    part_in_dim = in_dim // mp_size
+    
+    # (batch_size, in_dim) -> (in_dim, batch_size)
+    grad_x_T = grad_x.T.copy()  # Make contiguous
+    
+    recv_buf_T = np.empty((part_in_dim, batch_size), dtype=grad_x.dtype)
+    mp_comm.Reduce_scatter(grad_x_T, recv_buf_T, op=MPI.SUM)
+    
+    # (part_in_dim, batch_size) -> (batch_size, part_in_dim)
+    collected_grad_x = recv_buf_T.T
+    
+    return collected_grad_x
 
 def megatron_collect_backward_output(
     output_grad: np.ndarray,
