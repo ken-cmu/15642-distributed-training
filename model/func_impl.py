@@ -423,4 +423,13 @@ def collect_weight_grad(
 
     # Hint: Think about how you might want to aggregate the gradients from different nodes in data parallel training
 
-    raise NotImplementedError
+    collected_grad_w = np.empty_like(grad_w)
+    collected_grad_b = np.empty_like(grad_b)
+    dp_comm.Allreduce(grad_w, collected_grad_w, op=MPI.SUM)
+    dp_comm.Allreduce(grad_b, collected_grad_b, op=MPI.SUM)
+    
+    dp_size = dp_comm.Get_size()
+    collected_grad_w /= dp_size
+    collected_grad_b /= dp_size
+
+    return collected_grad_w, collected_grad_b
