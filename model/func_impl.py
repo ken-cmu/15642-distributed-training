@@ -78,8 +78,27 @@ def get_info(
 
     ...
 
-    raise NotImplementedError
+    mp_idx = rank % mp_size
+    dp_idx = rank // mp_size
 
+    # mp
+    mp_comm = comm.Split(color=dp_idx, key=rank)
+
+    # dp
+    dp_comm = comm.Split(color=mp_idx, key=rank)
+
+    # part_in_dim and part_out_dim
+    if is_fc1:
+        part_in_dim = in_dim
+        part_out_dim = out_dim // mp_size
+    elif is_megatron_mp:
+        part_in_dim = in_dim // mp_size
+        part_out_dim = out_dim
+    else:
+        part_in_dim = in_dim
+        part_out_dim = out_dim // mp_size
+    
+    return mp_idx, dp_idx, mp_comm, dp_comm, part_in_dim, part_out_dim
 
 def naive_collect_forward_input(
     x: np.ndarray,
