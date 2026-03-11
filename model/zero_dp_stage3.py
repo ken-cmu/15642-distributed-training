@@ -1,4 +1,5 @@
 import numpy as np
+from mpi4py import MPI
 
 import sys
 sys.path.append("..")
@@ -108,13 +109,25 @@ class ZeroDPStage3FCLayer(object):
 
         """TODO: Your code here"""
 
-        # Hint: You need to handle the case when tensor.numel() is not divisible by 
+        # Hint: You need to handle the case when tensor.size is not divisible by 
         # num_shards by padding zeros at the end of the flattened tensor before 
         # partitioning. The returned shard should INCLUDE the padded elements.
         # We keep track of the original shard_size (without padding) for
         # later use in communication.
 
-        return (np.empty(8), 8)
+        tensor_flat = tensor.flatten()
+
+        remainder = tensor_flat.size % num_shards
+        if remainder != 0:
+            padding_size = num_shards - remainder
+            tensor_flat = np.concatenate([tensor_flat, np.zeros(padding_size, dtype=tensor.dtype)])
+        
+        shard_size = tensor_flat.size // num_shards
+        start_idx = shard_idx * shard_size
+        end_idx = start_idx + shard_size
+        tensor_shard = tensor_flat[start_idx:end_idx]
+
+        return tensor_shard, shard_size
 
     def zero_grad(self):
         self.grad_w_shard = np.zeros_like(self.w_shard)
@@ -144,7 +157,19 @@ class ZeroDPStage3FCLayer(object):
         """TODO: Your code here"""
 
 
-        raise NotImplementedError
+        recv_buf = np.empty((self.w_shard_size, self.dp_size), dtype=self.w_shard.dtype)
+        self.comm.Allgather(self.w_shard, recv_buf)
+
+        full_w = recv_buf.flatten()[:self.w_numel].reshape(self.in_dim, self.out_dim)
+
+        recv_buf = np.empty((self.b_shard_size, self.dp_size), dtype=self.b_shard.dtype)
+        self.comm.Allgather(self.b_shard, recv_buf)
+
+        full_b = recv_buf.flatten()[:self.b_numel].reshape(self.out_dim)
+
+        out = x @ full_w + full_b
+
+        return out
 
     def backward(self, output_grad: np.ndarray) -> List[np.ndarray]:
         """Backward pass under ZeRO-DP Stage 3.
@@ -180,7 +205,39 @@ class ZeroDPStage3FCLayer(object):
 
         """TODO: Your code here"""
 
-        raise NotImplementedError
+        recv_buf = np.empty((self.w_shard_size * self.dp_size,), dtype=self.w_shard.dtype)
+        self.comm.Allgather(self.w_shard, recv_buf)
+        full_w = recv_buf[:self.w_numel].reshape(self.in_dim, self.out_dim)
+
+        grad_w_full = self.x.T @ output_grad  # (in_dim, out_dim)
+        grad_b_full = np.sum(output_grad, axis=0, keepdims=True)  # (1, out_dim)
+
+        grad_w_flat = grad_w_full.flatten()
+        grad_b_flat = grad_b_full.flatten()
+        
+        # Pad grad_w if needed
+        if grad_w_flat.size % self.dp_size != 0:
+            padding_size = self.dp_size - (grad_w_flat.size % self.dp_size)
+            grad_w_flat = np.concatenate([grad_w_flat, np.zeros(padding_size, dtype=grad_w_flat.dtype)])
+        
+        # Pad grad_b if needed
+        if grad_b_flat.size % self.dp_size != 0:
+            padding_size = self.dp_size - (grad_b_flat.size % self.dp_size)
+            grad_b_flat = np.concatenate([grad_b_flat, np.zeros(padding_size, dtype=grad_b_flat.dtype)])
+
+        grad_w_T = grad_w_flat.reshape(-1, 1).T.copy()  # (1, total_size)
+        recv_buf_w = np.empty((1, self.w_shard_size), dtype=grad_w_flat.dtype)
+        self.comm.Reduce_scatter(grad_w_T, recv_buf_w, op=MPI.SUM)
+        self.grad_w_shard[:] = recv_buf_w.flatten()
+
+        grad_b_T = grad_b_flat.reshape(-1, 1).T.copy()  # (1, total_size)
+        recv_buf_b = np.empty((1, self.b_shard_size), dtype=grad_b_flat.dtype)
+        self.comm.Reduce_scatter(grad_b_T, recv_buf_b, op=MPI.SUM)
+        self.grad_b_shard[:] = recv_buf_b.flatten()
+
+        grad_x = output_grad @ full_w.T
+
+        return [grad_x]
 
 
 class ZeroDPMLPModel(object):
